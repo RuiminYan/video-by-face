@@ -1,0 +1,16 @@
+# 参考照片（含个人隐私）
+person/
+
+# 模型文件（运行时自动下载）
+models/
+
+# 分类输出
+unknown/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 诊断临时文件
+test_tf_*.py
