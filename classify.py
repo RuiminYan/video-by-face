@@ -13,6 +13,7 @@
 """
 
 import argparse
+import os
 import shutil
 import sys
 import time
@@ -387,39 +388,63 @@ def main():
     results = []  # (视频名, 匹配人名, 相似度)
     startTime = time.time()
 
-    for video in tqdm(videos, desc="分类进度", unit="个"):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _classifyOne(video):
         try:
             name, score = classifyVideo(
                 video, refDb, detector, recognizer, args.threshold
             )
-
-            if name:
-                destDir = outputDir / name
-                results.append((video.name, name, score))
-                stats["success"] += 1
-
-                if not args.dry_run:
-                    destDir.mkdir(parents=True, exist_ok=True)
-                    dest = destDir / video.name
-                    if args.copy:
-                        shutil.copy2(video, dest)
-                    else:
-                        shutil.move(str(video), str(dest))
-            else:
-                results.append((video.name, "❓ unknown", score))
-                stats["unknown"] += 1
-
-                if not args.dry_run:
-                    unknownDir.mkdir(parents=True, exist_ok=True)
-                    dest = unknownDir / video.name
-                    if args.copy:
-                        shutil.copy2(video, dest)
-                    else:
-                        shutil.move(str(video), str(dest))
-
+            return video, name, score, None
         except Exception as e:
-            results.append((video.name, f"❌ 错误: {e}", 0.0))
+            return video, None, 0.0, e
+
+    def _handleResult(video, name, score, error):
+        if error is not None:
+            results.append((video.name, f"❌ 错误: {error}", 0.0))
             stats["error"] += 1
+            return
+
+        if name:
+            destDir = outputDir / name
+            results.append((video.name, name, score))
+            stats["success"] += 1
+
+            if not args.dry_run:
+                destDir.mkdir(parents=True, exist_ok=True)
+                dest = destDir / video.name
+                if args.copy:
+                    shutil.copy2(video, dest)
+                else:
+                    shutil.move(str(video), str(dest))
+        else:
+            results.append((video.name, "❓ unknown", score))
+            stats["unknown"] += 1
+
+            if not args.dry_run:
+                unknownDir.mkdir(parents=True, exist_ok=True)
+                dest = unknownDir / video.name
+                if args.copy:
+                    shutil.copy2(video, dest)
+                else:
+                    shutil.move(str(video), str(dest))
+
+    # Calculate workers based on available memory
+    # Each classify worker: 3 frames + DNN inference ≈ 50MB
+    try:
+        import psutil
+        availMB = psutil.virtual_memory().available // (1024 * 1024)
+        reserveMB = 2048
+        perWorkerMB = 50
+        memWorkers = max(1, (availMB - reserveMB) // perWorkerMB)
+    except ImportError:
+        memWorkers = 4
+    workers = min(memWorkers, os.cpu_count() or 4, len(videos))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_classifyOne, v): v for v in videos}
+        for future in tqdm(as_completed(futures), total=len(videos), desc="分类进度", unit="个"):
+            video, name, score, error = future.result()
+            _handleResult(video, name, score, error)
 
     elapsed = time.time() - startTime
 

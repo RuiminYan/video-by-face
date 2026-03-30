@@ -14,7 +14,10 @@
 """
 
 import argparse
+import gc
+import os
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -159,34 +162,82 @@ def _createLedMask(
     return mask
 
 
+def _mergeSegments(
+    segments: list[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """
+    合并属于同一数字的 LED 段 (segments) 为完整数字 bbox。
+
+    只处理宽高比 < 0.4 的窄段 (明确是七段显示器的单段)。
+    如果两个段在 x 方向间距 < 段高 且 y 方向重叠，则合并。
+    """
+    if not segments:
+        return []
+
+    rects = sorted(segments, key=lambda d: d[0])
+    merged: list[list[int]] = []  # [x, y, x2, y2]
+
+    for x, y, w, h in rects:
+        x2, y2 = x + w, y + h
+        if merged:
+            last = merged[-1]
+            lx, ly, lx2, ly2 = last
+            avgH = ((ly2 - ly) + h) / 2
+            xGap = x - lx2
+            yOverlap = min(y2, ly2) - max(y, ly)
+            if xGap < avgH * 1.2 and yOverlap > 0:
+                last[0] = min(lx, x)
+                last[1] = min(ly, y)
+                last[2] = max(lx2, x2)
+                last[3] = max(ly2, y2)
+                continue
+        merged.append([x, y, x2, y2])
+
+    return [(m[0], m[1], m[2] - m[0], m[3] - m[1]) for m in merged]
+
+
 def _findDigitCandidates(
-    mask: np.ndarray, imgH: int,
+    mask: np.ndarray, imgH: int, minHRatio: float = 0.03,
 ) -> list[tuple[int, int, int, int]]:
     """
     在 LED mask 中找到可能是数字的轮廓。
 
     筛选条件:
-    - 高度在画面的 3%~30% 之间
+    - 高度在画面的 minHRatio~30% 之间
     - 宽高比在 0.15~1.0 之间 (七段数字的典型范围)
+    - 窄段 (ar < 0.4) 会被合并为完整数字
 
     Returns:
         [(x, y, w, h), ...] 候选数字的包围盒列表
     """
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    minH = imgH * 0.03
+    minH = imgH * minHRatio
     maxH = imgH * 0.30
-    candidates = []
+    normalDigits = []   # ar >= 0.4: likely complete digits
+    narrowSegs = []     # ar <  0.4: likely individual segments
 
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
         if h < minH or h > maxH:
             continue
         aspect = w / h if h > 0 else 0
-        if 0.15 <= aspect <= 1.0:
-            candidates.append((x, y, w, h))
+        if aspect < 0.15 or aspect > 1.0:
+            continue
+        if aspect < 0.4:
+            narrowSegs.append((x, y, w, h))
+        else:
+            normalDigits.append((x, y, w, h))
 
-    return candidates
+    # Merge narrow segments into digit-level bboxes
+    mergedSegs = _mergeSegments(narrowSegs)
+    # Filter merged: only keep those with reasonable digit aspect ratio
+    for m in mergedSegs:
+        ar = m[2] / m[3] if m[3] > 0 else 0
+        if 0.15 <= ar <= 1.0:
+            normalDigits.append(m)
+
+    return normalDigits
 
 
 def _clusterIntoRows(
@@ -256,6 +307,26 @@ def _selectBestRow(
     # 评分: 数字数量 × 平均高度
     best = max(cleanedRows, key=lambda r: len(r) * sum(d[3] for d in r) / len(r))
     best.sort(key=lambda d: d[0])
+
+    # 过滤掉间距异常的离群数字 (来自不同显示器的误纳入)
+    # 大显上相邻数字间距通常 < 数字宽度的 2 倍
+    if len(best) >= 4:
+        gaps = [best[i + 1][0] - (best[i][0] + best[i][2]) for i in range(len(best) - 1)]
+        medGap = sorted(gaps)[len(gaps) // 2]
+        threshold = max(medGap * 3, best[0][2] * 3)  # 3x median gap or 3x digit width
+        # Remove digits that are too far from their neighbor
+        keep = list(range(len(best)))
+        for i in range(len(gaps)):
+            if gaps[i] > threshold:
+                # Large gap between i and i+1: one side is the outlier
+                # Keep the side with more digits
+                leftCount = i + 1
+                rightCount = len(best) - i - 1
+                if leftCount <= rightCount:
+                    keep = [j for j in keep if j > i]
+                else:
+                    keep = [j for j in keep if j <= i]
+        best = [best[j] for j in keep]
     return best
 
 
@@ -274,7 +345,7 @@ def detectTimerROI(
     """
     imgH, imgW = frame.shape[:2]
 
-    # 三级通道: 窄→中→宽
+    # --- Pass 1: standard detection ---
     for hsvRanges in [_HSV_TIGHT, _HSV_MED, _HSV_WIDE]:
         mask = _createLedMask(frame, hsvRanges)
         candidates = _findDigitCandidates(mask, imgH)
@@ -282,11 +353,28 @@ def detectTimerROI(
             continue
         rows = _clusterIntoRows(candidates)
         bestRow = _selectBestRow(rows)
-        # 魔方比赛时间至少 X.XXX = 4位数字
         if bestRow is not None and len(bestRow) >= 4:
             break
     else:
-        return None
+        # --- Pass 2: aggressive close for small displays (Speed Stacks) ---
+        bigKernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 15))
+        for hsvRanges in [_HSV_TIGHT, _HSV_MED]:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            rawMask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            for lo, hi in hsvRanges:
+                rawMask |= cv2.inRange(hsv, lo, hi)
+            mask = cv2.morphologyEx(rawMask, cv2.MORPH_CLOSE, bigKernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
+                                    cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            candidates = _findDigitCandidates(mask, imgH, minHRatio=0.015)
+            if not candidates:
+                continue
+            rows = _clusterIntoRows(candidates)
+            bestRow = _selectBestRow(rows)
+            if bestRow is not None and len(bestRow) >= 4:
+                break
+        else:
+            return None
 
     # 计算 ROI 包围盒 (稍微扩展以包含小数点)
     minX = min(d[0] for d in bestRow)
@@ -449,11 +537,12 @@ def assembleTime(digits: list[str | None]) -> str | None:
     rest = raw[:-3]
 
     if len(rest) <= 2:
-        # X.XXX 或 XX.XXX
+        # X.XXX or XX.XXX
+        rest = rest.lstrip('0') or '0'  # strip leading zeros, keep at least '0'
         return f"{rest}.{millis}"
     else:
-        # X:XX.XXX → 文件名用 X_XX.XXX
-        minutes = rest[:-2]
+        # X:XX.XXX -> filename uses X_XX.XXX
+        minutes = rest[:-2].lstrip('0') or '0'
         seconds = rest[-2:]
         return f"{minutes}_{seconds}.{millis}"
 
@@ -469,6 +558,17 @@ def _recognizeFrame(frame: np.ndarray) -> str | None:
         时间字符串 (如 "4.716") 或 None
     """
     detection = detectTimerROI(frame)
+
+    # Fallback: if detection failed on high-res frame, try downscaled
+    # (Speed Stacks displays are small; segments too tiny relative to 4K frame)
+    if detection is None:
+        h, w = frame.shape[:2]
+        if h > 1100:
+            scale = 1080 / h
+            frame = cv2.resize(frame, (int(w * scale), 1080),
+                               interpolation=cv2.INTER_AREA)
+            detection = detectTimerROI(frame)
+
     if detection is None:
         return None
 
@@ -526,6 +626,9 @@ def readTimer(
 
     for i, frame in enumerate(frames):
         timeStr = _recognizeFrame(frame)
+        # Filter out timer-reset readings (0.000 is never a valid solve time)
+        if timeStr is not None and timeStr.replace('_', '').replace('.', '').lstrip('0') == '':
+            timeStr = None
         results.append(timeStr)
         if debug:
             print(f"  帧{i}: {timeStr or '未检测到'}")
@@ -534,11 +637,25 @@ def readTimer(
     tailStart = len(results) * 2 // 3
 
     # Strategy 1: consecutive >=2 frames in tail window
+    # Cross-check: if another value appears more often globally, prefer it
+    allValid = [r for r in results if r is not None]
+    globalCounter = Counter(allValid)
+
     for i in range(len(results) - 1, tailStart, -1):
         if results[i] is not None and results[i] == results[i - 1]:
+            stableVal = results[i]
+            stableCount = globalCounter[stableVal]
+            # Check if any other value dominates globally
+            if globalCounter:
+                globalBest, globalBestCount = globalCounter.most_common(1)[0]
+                if globalBest != stableVal and globalBestCount > stableCount + 1:
+                    if debug:
+                        print(f"  Override stability '{stableVal}'({stableCount}x)"
+                              f" → global '{globalBest}'({globalBestCount}x)")
+                    return globalBest
             if debug:
-                print(f"  OK stability: f{i-1}~{i} = '{results[i]}'")
-            return results[i]
+                print(f"  OK stability: f{i-1}~{i} = '{stableVal}'")
+            return stableVal
 
     # Strategy 2: per-digit majority in tail window
     tailResults = [r for r in results[tailStart:] if r is not None]
@@ -597,6 +714,8 @@ def main():
     parser.add_argument("path", help="视频文件或目录路径")
     parser.add_argument("--seconds", type=float, default=4.0, help="取最后多少秒 (默认: 4.0)")
     parser.add_argument("--frames", type=int, default=25, help="取帧数量 (默认: 25)")
+    parser.add_argument("--rename", action="store_true", help="识别后重命名视频文件")
+    parser.add_argument("--dry-run", action="store_true", help="仅预览, 不实际重命名")
     parser.add_argument("--debug", action="store_true", help="输出调试信息")
     args = parser.parse_args()
 
@@ -610,27 +729,92 @@ def main():
             if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
         )
     else:
-        print(f"❌ 路径不存在: {target}")
+        print(f"Path not found: {target}")
         sys.exit(1)
 
     if not videos:
-        print(f"❌ 未找到视频文件")
+        print(f"No video files found")
         sys.exit(1)
 
-    print(f"🔢 识别 {len(videos)} 个视频的计时器成绩...\n")
+    print(f"OCR: {len(videos)} videos\n")
 
-    for video in videos:
-        result = readTimer(
-            video,
-            seconds=args.seconds,
-            frameCount=args.frames,
-            debug=args.debug,
-        )
+    def _ocrOne(v: Path) -> tuple[Path, str | None]:
+        r = readTimer(v, seconds=args.seconds, frameCount=args.frames, debug=args.debug)
+        gc.collect()
+        return v, r
 
-        expected = video.stem  # 文件名就是预期成绩
-        status = "✅" if result == expected else "❓"
-        print(f"  {status} {video.name}: {result or '未识别'}" +
-              (f" (预期: {expected})" if result != expected else ""))
+    def _handleResult(video: Path, result: str | None) -> tuple[int, int]:
+        """Handle one OCR result: print + rename. Returns (ok, fail) counts."""
+        if result is None:
+            print(f"  [FAIL] {video.name}: not recognized")
+            return 0, 1
+
+        if args.rename or args.dry_run:
+            newName = result + video.suffix
+            if newName == video.name:
+                print(f"  [SKIP] {video.name}: already named correctly")
+                return 1, 0
+
+            newPath = video.parent / newName
+            if newPath.exists():
+                idx = 2
+                while True:
+                    newName = f"{result} ({idx}){video.suffix}"
+                    newPath = video.parent / newName
+                    if not newPath.exists():
+                        break
+                    idx += 1
+
+            if args.dry_run:
+                print(f"  [DRY ] {video.name} -> {newName}")
+            else:
+                for attempt in range(5):
+                    try:
+                        video.rename(newPath)
+                        print(f"  [ OK ] {video.name} -> {newName}")
+                        break
+                    except PermissionError:
+                        if attempt < 4:
+                            time.sleep(1)
+                        else:
+                            print(f"  [ERR ] {video.name}: file locked, skipped")
+                            return 0, 1
+            return 1, 0
+        else:
+            print(f"  [ OK ] {video.name}: {result}")
+            return 1, 0
+
+    renamed = 0
+    failed = 0
+
+    if args.debug or len(videos) == 1:
+        for v in videos:
+            _, result = _ocrOne(v)
+            ok, fail = _handleResult(v, result)
+            renamed += ok
+            failed += fail
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Calculate workers based on available memory
+        # Each OCR worker: 25 frames × ~6MB + processing ≈ 200MB
+        try:
+            import psutil
+            availMB = psutil.virtual_memory().available // (1024 * 1024)
+            reserveMB = 2048  # keep 2GB for system
+            perWorkerMB = 200
+            memWorkers = max(1, (availMB - reserveMB) // perWorkerMB)
+        except ImportError:
+            memWorkers = 2  # safe fallback
+        workers = min(memWorkers, os.cpu_count() or 4, len(videos))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_ocrOne, v): v for v in videos}
+            for future in as_completed(futures):
+                video, result = future.result()
+                ok, fail = _handleResult(video, result)
+                renamed += ok
+                failed += fail
+
+    print(f"\nDone: {renamed} ok, {failed} failed")
 
 
 if __name__ == "__main__":
