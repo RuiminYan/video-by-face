@@ -35,7 +35,13 @@ _HSV_TIGHT = [
     ((168, 130, 160), (180, 255, 255)),
 ]
 
-# 宽范围: 红+橙+黄色 LED (更高亮度要求以排除肤色)
+# 中范围: 红+橙+黄 LED (中等阈值, 平衡覆盖与抗干扰)
+_HSV_MED = [
+    ((0, 120, 180), (30, 255, 255)),
+    ((168, 120, 180), (180, 255, 255)),
+]
+
+# 宽范围: 红+橙+黄色 LED (最宽松, 覆盖低饱和度的黄色 LED)
 _HSV_WIDE = [
     ((0, 100, 200), (35, 255, 255)),
     ((168, 100, 200), (180, 255, 255)),
@@ -268,8 +274,8 @@ def detectTimerROI(
     """
     imgH, imgW = frame.shape[:2]
 
-    # 双通道: 先窄后宽
-    for hsvRanges in [_HSV_TIGHT, _HSV_WIDE]:
+    # 三级通道: 窄→中→宽
+    for hsvRanges in [_HSV_TIGHT, _HSV_MED, _HSV_WIDE]:
         mask = _createLedMask(frame, hsvRanges)
         candidates = _findDigitCandidates(mask, imgH)
         if not candidates:
@@ -381,10 +387,12 @@ def recognizeDigit(
         return None
 
     # 如果提供了包围盒尺寸，用宽高比预判 "1"
+    # "1" 在七段LED上只有BC两个竖段, 宽度远小于其他数字
+    # 模板匹配对 "1" 极不可靠 (总是误判为 "2"), 必须用宽高比拦截
     if bboxW > 0 and bboxH > 0:
         aspect = bboxW / bboxH
         widthRatio = bboxW / avgW if avgW > 0 else 1.0
-        if aspect < 0.35 and widthRatio < 0.55:
+        if aspect < 0.35 and widthRatio < 0.65:
             return "1"
 
     # 模板匹配
@@ -483,7 +491,7 @@ def _recognizeFrame(frame: np.ndarray) -> str | None:
 def readTimer(
     videoPath: Path,
     seconds: float = 4.0,
-    frameCount: int = 15,
+    frameCount: int = 25,
     debug: bool = False,
 ) -> str | None:
     """
@@ -522,22 +530,48 @@ def readTimer(
         if debug:
             print(f"  帧{i}: {timeStr or '未检测到'}")
 
-    # 策略 1: 稳定性检测 — 找连续 ≥2 帧相同的读数
-    # 从后往前找（最后稳定的读数最可能是最终成绩）
-    for i in range(len(results) - 1, 0, -1):
+    # All strategies operate on the tail window (last 1/3 frames = timer likely stopped)
+    tailStart = len(results) * 2 // 3
+
+    # Strategy 1: consecutive >=2 frames in tail window
+    for i in range(len(results) - 1, tailStart, -1):
         if results[i] is not None and results[i] == results[i - 1]:
             if debug:
-                print(f"  ✓ 稳定性检测: 帧{i-1}~{i} 连续读到 '{results[i]}'")
+                print(f"  OK stability: f{i-1}~{i} = '{results[i]}'")
             return results[i]
 
-    # 策略 2: 加权投票 — 后面帧权重更高 (更可能是最终成绩)
+    # Strategy 2: per-digit majority in tail window
+    tailResults = [r for r in results[tailStart:] if r is not None]
+    if len(tailResults) >= 2:
+        # If all tail results have same digit count, do per-digit majority vote
+        # This corrects single-digit template matching errors (e.g. 4.101 vs 4.201)
+        lengths = set(len(r) for r in tailResults)
+        if len(lengths) == 1:
+            L = lengths.pop()
+            merged = ""
+            for pos in range(L):
+                chars = [r[pos] for r in tailResults]
+                merged += Counter(chars).most_common(1)[0][0]
+            # Re-apply decimal formatting (assembleTime uses raw digits)
+            if debug:
+                print(f"  OK tail-merge: '{merged}' (from {len(tailResults)} frames)")
+            return merged
+
+        # Otherwise, simple majority
+        tailCounter = Counter(tailResults)
+        tailBest, tailCount = tailCounter.most_common(1)[0]
+        if tailCount >= 2:
+            if debug:
+                print(f"  OK tail-vote: '{tailBest}' ({tailCount}x in last {len(results)-tailStart} frames)")
+            return tailBest
+
+    # Strategy 3: weighted vote across all frames (later = heavier)
     validResults = [(i, r) for i, r in enumerate(results) if r is not None]
     if not validResults:
         if debug:
-            print(f"  ❌ 所有帧都未成功识别")
+            print(f"  FAIL: no frames recognized")
         return None
 
-    # 帧越靠后权重越高: weight = 1 + i/total
     total = len(results)
     scores: dict[str, float] = {}
     for i, r in validResults:
@@ -548,7 +582,7 @@ def readTimer(
     counter = Counter(r for _, r in validResults)
 
     if debug:
-        print(f"  投票回退: {counter} → '{bestResult}' ({counter[bestResult]}票, 加权={scores[bestResult]:.1f})")
+        print(f"  Fallback vote: '{bestResult}' ({counter[bestResult]}x, w={scores[bestResult]:.1f})")
 
     return bestResult
 
@@ -562,7 +596,7 @@ def main():
     )
     parser.add_argument("path", help="视频文件或目录路径")
     parser.add_argument("--seconds", type=float, default=4.0, help="取最后多少秒 (默认: 4.0)")
-    parser.add_argument("--frames", type=int, default=15, help="取帧数量 (默认: 15)")
+    parser.add_argument("--frames", type=int, default=25, help="取帧数量 (默认: 25)")
     parser.add_argument("--debug", action="store_true", help="输出调试信息")
     args = parser.parse_args()
 
