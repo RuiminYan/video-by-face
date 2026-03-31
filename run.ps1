@@ -3,7 +3,7 @@
     一键处理魔方比赛视频: OCR识别成绩 → 重命名 → 按人脸分类
 
 .DESCRIPTION
-    Step 1: 用 ocr_timer.py 识别大显上的成绩, 重命名视频文件 (如 IMG_1234.MP4 → 4.716.MP4)
+    Step 1: 用 ocr_timer.py 提取帧, 识别成绩后重命名 (如 IMG_1234.MP4 → 4.716.MP4)
     Step 2: 用 classify.py 按人脸识别将视频分到选手文件夹
 
 .PARAMETER VideoDir
@@ -54,7 +54,8 @@ Write-Host "  Mode      : $(if ($DryRun) { 'Dry Run (preview only)' } else { 'Li
 Write-Host ""
 
 # ---------- Step 1: OCR Rename ----------
-if (-not $SkipOCR) {
+if (-not $SkipOCR)
+{
     Write-Host "Step 1/2: OCR Timer Recognition" -ForegroundColor Yellow
     Write-Host "----------------------------------------"
 
@@ -63,35 +64,40 @@ if (-not $SkipOCR) {
 
     python @ocrArgs
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0)
+    {
         Write-Host "OCR step failed!" -ForegroundColor Red
         exit 1
     }
     Write-Host ""
 }
-else {
+else
+{
     Write-Host "Step 1/2: OCR skipped (--SkipOCR)" -ForegroundColor DarkGray
     Write-Host ""
 }
 
 # ---------- Step 2: Face Classify ----------
-if (-not $SkipClassify) {
+if (-not $SkipClassify)
+{
     Write-Host "Step 2/2: Face Classification" -ForegroundColor Yellow
     Write-Host "----------------------------------------"
 
     $classifyArgs = @($ClassifyScript, $VideoDir)
     if ($DryRun) { $classifyArgs += "--dry-run" }
-    if ($Copy)   { $classifyArgs += "--copy" }
+    if ($Copy) { $classifyArgs += "--copy" }
 
     python @classifyArgs
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0)
+    {
         Write-Host "Classify step failed!" -ForegroundColor Red
         exit 1
     }
     Write-Host ""
 }
-else {
+else
+{
     Write-Host "Step 2/2: Classify skipped (--SkipClassify)" -ForegroundColor DarkGray
     Write-Host ""
 }

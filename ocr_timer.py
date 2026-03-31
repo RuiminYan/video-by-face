@@ -738,21 +738,29 @@ def main():
 
     print(f"OCR: {len(videos)} videos\n")
 
-    def _ocrOne(v: Path) -> tuple[Path, str | None]:
+    def _ocrOne(v: Path) -> tuple[Path, str | None, float]:
+        t0 = time.perf_counter()
         r = readTimer(v, seconds=args.seconds, frameCount=args.frames, debug=args.debug)
         gc.collect()
-        return v, r
+        return v, r, time.perf_counter() - t0
 
-    def _handleResult(video: Path, result: str | None) -> tuple[int, int]:
+    renamed = 0
+    failed = 0
+    timings: list[float] = []
+    totalStart = time.perf_counter()
+
+    def _handleResult(video: Path, result: str | None, elapsed: float, showTime: bool = True) -> tuple[int, int]:
         """Handle one OCR result: print + rename. Returns (ok, fail) counts."""
+        timings.append(elapsed)
+        t = f"  ({elapsed:.1f}s)" if showTime else ""
         if result is None:
-            print(f"  [FAIL] {video.name}: not recognized")
+            print(f"  [FAIL] {video.name}: not recognized{t}")
             return 0, 1
 
         if args.rename or args.dry_run:
             newName = result + video.suffix
             if newName == video.name:
-                print(f"  [SKIP] {video.name}: already named correctly")
+                print(f"  [SKIP] {video.name}: already named correctly{t}")
                 return 1, 0
 
             newPath = video.parent / newName
@@ -766,12 +774,12 @@ def main():
                     idx += 1
 
             if args.dry_run:
-                print(f"  [DRY ] {video.name} -> {newName}")
+                print(f"  [DRY ] {video.name} -> {newName}{t}")
             else:
                 for attempt in range(5):
                     try:
                         video.rename(newPath)
-                        print(f"  [ OK ] {video.name} -> {newName}")
+                        print(f"  [ OK ] {video.name} -> {newName}{t}")
                         break
                     except PermissionError:
                         if attempt < 4:
@@ -781,16 +789,14 @@ def main():
                             return 0, 1
             return 1, 0
         else:
-            print(f"  [ OK ] {video.name}: {result}")
+            print(f"  [ OK ] {video.name}: {result}{t}")
             return 1, 0
 
-    renamed = 0
-    failed = 0
-
     if args.debug or len(videos) == 1:
+        # 单线程: 显示每个视频耗时 (真实值)
         for v in videos:
-            _, result = _ocrOne(v)
-            ok, fail = _handleResult(v, result)
+            _, result, elapsed = _ocrOne(v)
+            ok, fail = _handleResult(v, result, elapsed, showTime=True)
             renamed += ok
             failed += fail
     else:
@@ -809,12 +815,15 @@ def main():
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_ocrOne, v): v for v in videos}
             for future in as_completed(futures):
-                video, result = future.result()
-                ok, fail = _handleResult(video, result)
+                video, result, elapsed = future.result()
+                # 并行模式: 不显示单视频耗时 (线程墙钟时间无意义)
+                ok, fail = _handleResult(video, result, elapsed, showTime=False)
                 renamed += ok
                 failed += fail
 
-    print(f"\nDone: {renamed} ok, {failed} failed")
+    totalElapsed = time.perf_counter() - totalStart
+    avgElapsed = totalElapsed / len(videos) if videos else 0
+    print(f"\nDone: {renamed} ok, {failed} failed | 总耗时: {totalElapsed:.1f}s | 平均每视频: {avgElapsed:.1f}s")
 
 
 if __name__ == "__main__":
