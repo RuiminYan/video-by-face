@@ -16,23 +16,23 @@ pip install -r requirements.txt
 
 ```powershell
 # 先预览，不实际操作
-.\run.ps1 "Z:\魔方比赛\260307" -DryRun
+.\process-videos.ps1 "Z:\魔方比赛\260307" -DryRun
 
 # 确认无误后，正式执行 (OCR重命名 + 人脸分类)
-.\run.ps1 "Z:\魔方比赛\260307"
+.\process-videos.ps1 "Z:\魔方比赛\260307"
 
 # 分类时复制而非移动
-.\run.ps1 "Z:\魔方比赛\260307" -Copy
+.\process-videos.ps1 "Z:\魔方比赛\260307" -Copy
 ```
 
 ### 只跑其中一步
 
 ```powershell
 # 只 OCR 重命名，不分类
-.\run.ps1 "Z:\魔方比赛\260307" -SkipClassify
+.\process-videos.ps1 "Z:\魔方比赛\260307" -SkipClassify
 
 # 只分类，不 OCR (视频已命名好)
-.\run.ps1 "Z:\魔方比赛\260307" -SkipOCR
+.\process-videos.ps1 "Z:\魔方比赛\260307" -SkipOCR
 ```
 
 ## 处理流程
@@ -94,7 +94,7 @@ python classify.py "Z:\魔方比赛\260307" --copy
 
 ## 参数一览
 
-### run.ps1
+### process-videos.ps1
 
 | 参数 | 说明 |
 |------|------|

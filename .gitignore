@@ -18,3 +18,9 @@ test_tf_*.py
 video/
 jpg/
 副本/
+
+# Claude Code / MCP 产物
+.claude/
+.playwright-mcp/
+*.2do
+.tmp_*.txt

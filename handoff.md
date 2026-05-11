@@ -7,7 +7,7 @@
 **关键文件：**
 - `ocr_timer.py` — OCR 核心逻辑
 - `classify.py` — 人脸识别分类
-- `run.ps1` — 主入口（PowerShell）
+- `process-videos.ps1` — 主入口（PowerShell）
 - `test_ocr.py` — 回归测试脚本（直接运行即可）
 
 **运行测试：**
