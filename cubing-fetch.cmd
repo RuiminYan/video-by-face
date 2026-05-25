@@ -1,2 +1,4 @@
 @echo off
-python -X utf8 "%~dp0fetch_competition.py" %*
+pushd "%~dp0"
+uv run python -X utf8 fetch_competition.py %*
+popd

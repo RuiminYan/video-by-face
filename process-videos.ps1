@@ -231,10 +231,10 @@ if (-not $SkipOCR)
     Write-Host "Step 1/2: OCR Timer Recognition" -ForegroundColor Yellow
     Write-Host "----------------------------------------"
 
-    $ocrArgs = @($OcrScript, $VideoDir, "--rename")
+    $ocrArgs = @("run", "python", $OcrScript, $VideoDir, "--rename")
     if ($DryRun) { $ocrArgs += "--dry-run" }
 
-    python @ocrArgs
+    uv @ocrArgs
 
     if ($LASTEXITCODE -ne 0)
     {
@@ -256,11 +256,11 @@ if (-not $SkipClassify)
     Write-Host "Step 2/2: Face Classification" -ForegroundColor Yellow
     Write-Host "----------------------------------------"
 
-    $classifyArgs = @($ClassifyScript, $VideoDir)
+    $classifyArgs = @("run", "python", $ClassifyScript, $VideoDir)
     if ($DryRun) { $classifyArgs += "--dry-run" }
     if ($Copy)   { $classifyArgs += "--copy" }
 
-    python @classifyArgs
+    uv @classifyArgs
 
     if ($LASTEXITCODE -ne 0)
     {

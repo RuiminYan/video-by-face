@@ -13,7 +13,7 @@
 **运行测试：**
 ```
 cd D:\cube\video-by-face
-python test_ocr.py
+uv run python test_ocr.py
 ```
 
 测试视频按结果分两组：
@@ -102,7 +102,7 @@ ocr_timer.py
 **立即运行测试：**
 ```powershell
 cd D:\cube\video-by-face
-python test_ocr.py
+uv run python test_ocr.py
 ```
 
 **项目目标：** 从比赛录像中自动 OCR 读取七段 LED 大显上的成绩数字（如 `4.098`、`3.698`），用于自动重命名视频文件。

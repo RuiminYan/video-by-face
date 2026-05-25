@@ -10,7 +10,7 @@ description: 识别比赛视频中大显上的成绩并重命名视频文件
 // turbo
 运行命令提取每个视频的最佳帧图片（支持多目录，空格分隔）：
 ```
-python ai_ocr_timer.py "<目录1>" ["<目录2>" ...]
+uv run python ai_ocr_timer.py "<目录1>" ["<目录2>" ...]
 ```
 工作目录: `D:\cube\video-by-face`
 
@@ -51,13 +51,13 @@ python ai_ocr_timer.py "<目录1>" ["<目录2>" ...]
 // turbo
 用户确认后，运行命令重命名视频文件：
 ```
-python ai_ocr_timer.py --apply "<成绩1>, <成绩2>, ..."
+uv run python ai_ocr_timer.py --apply "<成绩1>, <成绩2>, ..."
 ```
 工作目录: `D:\cube\video-by-face`
 
 例如：
 ```
-python ai_ocr_timer.py --apply "4.098, FAIL_遮挡, 3.455"
+uv run python ai_ocr_timer.py --apply "4.098, FAIL_遮挡, 3.455"
 ```
 
 失败的视频会被重命名为如 `FAIL_遮挡.MP4`，方便后续人工处理。

@@ -11,6 +11,7 @@ unknown/
 __pycache__/
 *.pyc
 *.pyo
+.venv/
 
 # 诊断临时文件
 test_tf_*.py

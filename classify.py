@@ -16,6 +16,7 @@ import argparse
 import os
 import shutil
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -98,6 +99,22 @@ def createRecognizer() -> cv2.FaceRecognizerSF:
         model=str(SFACE_PATH),
         config="",
     )
+
+
+# NOTE: OpenCV DNN (YuNet/SFace) 非线程安全——多线程共用一个实例会导致 C++ 层崩溃 (进程闪退)。
+# 每个 worker 线程在 _getThreadModels() 里 lazily 持有自己的一份。
+_threadLocal = threading.local()
+_modelInitLock = threading.Lock()
+
+
+def _getThreadModels() -> tuple[cv2.FaceDetectorYN, cv2.FaceRecognizerSF]:
+    """Return this thread's (detector, recognizer), creating them on first call."""
+    if not hasattr(_threadLocal, "detector"):
+        # Serialize model loading to avoid concurrent ONNX parse in OpenCV
+        with _modelInitLock:
+            _threadLocal.detector = createDetector()
+            _threadLocal.recognizer = createRecognizer()
+    return _threadLocal.detector, _threadLocal.recognizer
 
 
 def detectLargestFace(
@@ -392,8 +409,10 @@ def main():
 
     def _classifyOne(video):
         try:
+            # 每个 worker 用自己的 detector/recognizer (OpenCV DNN 非线程安全)
+            threadDetector, threadRecognizer = _getThreadModels()
             name, score = classifyVideo(
-                video, refDb, detector, recognizer, args.threshold
+                video, refDb, threadDetector, threadRecognizer, args.threshold
             )
             return video, name, score, None
         except Exception as e:
@@ -430,12 +449,12 @@ def main():
                     shutil.move(str(video), str(dest))
 
     # Calculate workers based on available memory
-    # Each classify worker: 3 frames + DNN inference ≈ 50MB
+    # Each classify worker: own SFace (~40MB) + YuNet + 3 frames + inference ≈ 100MB
     try:
         import psutil
         availMB = psutil.virtual_memory().available // (1024 * 1024)
         reserveMB = 2048
-        perWorkerMB = 50
+        perWorkerMB = 100
         memWorkers = max(1, (availMB - reserveMB) // perWorkerMB)
     except ImportError:
         memWorkers = 4

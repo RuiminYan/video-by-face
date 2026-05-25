@@ -13,7 +13,7 @@ UI text and prompts are in Chinese; keep that convention when editing user-facin
 ## Common commands
 
 ```powershell
-pip install -r requirements.txt           # opencv-python, numpy, tqdm (psutil optional, used for worker sizing)
+uv sync                                   # 一次性: 建 .venv 并装齐 pyproject.toml 列出的依赖
 
 .\process-videos.ps1 "Z:\cube-comp\260307" -DryRun   # full pipeline preview
 .\process-videos.ps1 "Z:\cube-comp\260307"           # OCR-rename then face-classify (move)
@@ -21,17 +21,17 @@ pip install -r requirements.txt           # opencv-python, numpy, tqdm (psutil o
 .\process-videos.ps1 "Z:\cube-comp\260307" -SkipOCR  # only one stage
 .\process-videos.ps1 "Z:\cube-comp\260307" -SkipClassify
 
-python ocr_timer.py "<dir>" --rename --dry-run     # standalone seven-segment OCR
-python ocr_timer.py "<file.mp4>" --debug           # single-file with per-frame trace
-python classify.py  "<dir>" --threshold 0.35       # standalone face classify
-python ai_ocr_timer.py "<dir1>" "<dir2>"           # AI-assisted OCR step 1: extract frames
-python ai_ocr_timer.py --apply "4.716, 3.698, ..." # AI-assisted OCR step 3: rename from results
+uv run python ocr_timer.py "<dir>" --rename --dry-run     # standalone seven-segment OCR
+uv run python ocr_timer.py "<file.mp4>" --debug           # single-file with per-frame trace
+uv run python classify.py  "<dir>" --threshold 0.35       # standalone face classify
+uv run python ai_ocr_timer.py "<dir1>" "<dir2>"           # AI-assisted OCR step 1: extract frames
+uv run python ai_ocr_timer.py --apply "4.716, 3.698, ..." # AI-assisted OCR step 3: rename from results
 ```
 
 ### Tests
 
 ```bash
-python test_ocr.py
+uv run python test_ocr.py
 ```
 
 Regression suite over `video/good/` (must all pass — never regress) and `video/fail/` (known failures, expected to FAIL until fixed). Test names are the expected OCR output: `4.716.MP4` should read as `4.716`. Both directories are gitignored — they hold real competition footage.
@@ -74,6 +74,20 @@ Both `classify.py` and `ocr_timer.py` size their thread pool from available RAM 
 ### Wall-clock timings in parallel mode are meaningless
 
 `ocr_timer.py` deliberately suppresses per-video timing in the parallel path because the futures' wall-clock times overlap. Single-file/`--debug` mode runs sequentially and reports real per-video time. Preserve this distinction when changing the runner.
+
+## `cubing-fetch <slug>` — 建赛事文件夹骨架
+
+`cubing-fetch.cmd` → `fetch_competition.py`,从 cubing.com 拉 round 结果,在 `Z:\魔方比赛\` 下按比赛日期建主目录,内部按选手 / 项目 / 轮次建子目录(如 `Timofei Tarasenko\Minx Fi 28.04 avg\`)。后续 `process-videos.ps1` 处理时按这套骨架对号入座。
+
+### `person/<name>` 命名约定
+
+- 关注的选手作为子目录,目录名 = 选手 key。**只在首字符 ASCII 字母 + 第二字符非 ASCII(CJK)时才剥前缀**,例如 `Z张博藩` → key `张博藩`;`Max Park` / `Feliks Zemdegs` / `Đỗ Quang Hưng` 全名是 key(不剥)。
+- `event.txt`(可选):每行一个事件 id(`333` / `minx` / `pyram` ...),只针对该选手过滤这些项目;不存在时接受所有项目。
+- 同套目录也是 wca-monitor `watched_persons` 的源,改动后跑 `D:\cube\wca-monitor\add_watched.ps1` 同步到服务器。
+
+### Event 显示名(`EVENT_NAME` 字典)
+
+文件夹标签简写:`Megaminx → Minx` / `Pyraminx → Pyra`,其余标准。改这张表会影响所有新建文件夹。
 
 ## Known broken cases
 

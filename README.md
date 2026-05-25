@@ -9,7 +9,7 @@
 ### 安装依赖
 
 ```powershell
-pip install -r requirements.txt
+uv sync   # 建 .venv 并装齐依赖 (一次性)
 ```
 
 ### 一键处理 (推荐)
@@ -52,13 +52,13 @@ pip install -r requirements.txt
 
 ```powershell
 # 仅识别，不重命名
-python ocr_timer.py "Z:\魔方比赛\260307"
+uv run python ocr_timer.py "Z:\魔方比赛\260307"
 
 # 识别并重命名
-python ocr_timer.py "Z:\魔方比赛\260307" --rename
+uv run python ocr_timer.py "Z:\魔方比赛\260307" --rename
 
 # 预览重命名
-python ocr_timer.py "Z:\魔方比赛\260307" --rename --dry-run
+uv run python ocr_timer.py "Z:\魔方比赛\260307" --rename --dry-run
 ```
 
 **支持的成绩格式：**
@@ -87,9 +87,9 @@ person/
 > 照片要求：正脸、光线好、无遮挡。1 张就够，2~3 张可提高精度。
 
 ```powershell
-python classify.py "Z:\魔方比赛\260307" --dry-run
-python classify.py "Z:\魔方比赛\260307"
-python classify.py "Z:\魔方比赛\260307" --copy
+uv run python classify.py "Z:\魔方比赛\260307" --dry-run
+uv run python classify.py "Z:\魔方比赛\260307"
+uv run python classify.py "Z:\魔方比赛\260307" --copy
 ```
 
 ## 参数一览
@@ -140,10 +140,10 @@ python classify.py "Z:\魔方比赛\260307" --copy
 
 ```powershell
 # 单目录
-python ai_ocr_timer.py "Z:\魔方比赛\260329\耿暄一\3x3 R2"
+uv run python ai_ocr_timer.py "Z:\魔方比赛\260329\耿暄一\3x3 R2"
 
 # 多目录 (空格分隔，自动去重)
-python ai_ocr_timer.py "Z:\魔方比赛\260329" "Z:\魔方比赛\260329\沈懿"
+uv run python ai_ocr_timer.py "Z:\魔方比赛\260329" "Z:\魔方比赛\260329\沈懿"
 ```
 
 每个视频提取最后几秒中大显亮着的最佳帧，保存到：
@@ -160,7 +160,7 @@ AI 会自动提取帧、看图识别、列表给你确认。
 **Step 3 — 重命名（自动）**
 
 ```powershell
-python ai_ocr_timer.py --apply "4.098, 4.574, 3.455"
+uv run python ai_ocr_timer.py --apply "4.098, 4.574, 3.455"
 ```
 
 ### 识别失败时的文件名

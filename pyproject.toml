@@ -1,0 +1,12 @@
+[project]
+name = "video-by-face"
+version = "0.1.0"
+description = "Rubik's cube competition video processor: OCR timer + face classify"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "tqdm",
+    "psutil",
+    "websocket-client",
+]

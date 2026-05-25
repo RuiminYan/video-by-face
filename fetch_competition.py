@@ -33,7 +33,7 @@ EVENT_NAME = {
     '333oh': '3x3 OH', '333bf': '3x3 BLD', '333fm': '3x3 FM',
     '333ft': '3x3 Feet', '333mbf': '3x3 MBLD',
     '444bf': '4x4 BLD', '555bf': '5x5 BLD',
-    'pyram': 'Pyraminx', 'skewb': 'Skewb', 'minx': 'Megaminx',
+    'pyram': 'Pyra', 'skewb': 'Skewb', 'minx': 'Minx',
     'sq1': 'Square-1', 'clock': 'Clock',
 }
 
@@ -122,7 +122,10 @@ def load_person_map(person_dir):
         if not d.is_dir():
             continue
         name = d.name
-        if name and name[0].isascii() and name[0].isalpha():
+        # 仅当首字符 ASCII 字母 + 第二字符非 ASCII(分组前缀紧跟 CJK)才剥前缀,
+        # 否则 `Timofei Tarasenko` / `Max Park` / `Feliks Zemdegs` 会被错误截首字母
+        if (len(name) >= 2 and name[0].isascii() and name[0].isalpha()
+                and not name[1].isascii()):
             key = name[1:]
         else:
             key = name
